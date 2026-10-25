@@ -4,12 +4,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
   const activityCardTemplate = document.getElementById("activity-card-template");
+  const participantTemplate = document.getElementById("participant-template");
   const signupButton = signupForm.querySelector('button[type="submit"]');
 
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
-      const response = await fetch("/activities");
+      const response = await fetch("/activities", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Failed to load activities: ${response.status}`);
+      }
+
       const activities = await response.json();
 
       // Clear loading message
@@ -23,6 +28,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const spotsLeft = details.max_participants - details.participants.length;
 
+        activityCard.dataset.activity = name;
         activityCard.querySelector("h4").textContent = name;
         activityCard.querySelector(".activity-description").textContent = details.description;
         activityCard.querySelector(".activity-schedule").textContent = `Schedule: ${details.schedule}`;
@@ -35,8 +41,11 @@ document.addEventListener("DOMContentLoaded", () => {
           participantsList.appendChild(emptyMessage);
         } else {
           details.participants.forEach((email) => {
-            const participant = document.createElement("li");
-            participant.textContent = email;
+            const participant = participantTemplate.content.firstElementChild.cloneNode(true);
+            participant.querySelector(".participant-email").textContent = email;
+            const removeButton = participant.querySelector(".participant-remove");
+            removeButton.dataset.email = email;
+            removeButton.setAttribute("aria-label", `Unregister ${email} from ${name}`);
             participantsList.appendChild(participant);
           });
         }
@@ -49,9 +58,11 @@ document.addEventListener("DOMContentLoaded", () => {
         option.textContent = name;
         activitySelect.appendChild(option);
       });
+      return true;
     } catch (error) {
       activitiesList.innerHTML = "<p>Failed to load activities. Please try again later.</p>";
       console.error("Error fetching activities:", error);
+      return false;
     }
   }
 
@@ -77,7 +88,10 @@ document.addEventListener("DOMContentLoaded", () => {
         messageDiv.textContent = result.message;
         messageDiv.className = "success";
         signupForm.reset();
-        await fetchActivities();
+        if (!await fetchActivities()) {
+          messageDiv.textContent = `${result.message} The activity list could not be refreshed; reload the page to see the latest details.`;
+          messageDiv.className = "error";
+        }
       } else {
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
@@ -96,6 +110,43 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Error signing up:", error);
     } finally {
       signupButton.disabled = false;
+    }
+  });
+
+  activitiesList.addEventListener("click", async (event) => {
+    const removeButton = event.target.closest(".participant-remove");
+    if (!removeButton) {
+      return;
+    }
+
+    const activityCard = removeButton.closest(".activity-card");
+    const activity = activityCard.dataset.activity;
+    const email = removeButton.dataset.email;
+    removeButton.disabled = true;
+
+    try {
+      const response = await fetch(
+        `/activities/${encodeURIComponent(activity)}/signup?email=${encodeURIComponent(email)}`,
+        { method: "DELETE" }
+      );
+      const result = await response.json();
+
+      messageDiv.textContent = result.message || result.detail || "An error occurred";
+      messageDiv.className = response.ok ? "success" : "error";
+      messageDiv.classList.remove("hidden");
+
+      if (response.ok) {
+        await fetchActivities();
+      }
+    } catch (error) {
+      messageDiv.textContent = "Failed to unregister participant. Please try again.";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+      console.error("Error unregistering participant:", error);
+    } finally {
+      if (removeButton.isConnected) {
+        removeButton.disabled = false;
+      }
     }
   });
 
